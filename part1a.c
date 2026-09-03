@@ -97,6 +97,7 @@ void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
       vect_t pos[], int n, int loc_n);
 void Update_part(int loc_part, double masses[], vect_t loc_forces[],
       vect_t loc_pos[], vect_t loc_vel[], int n, int loc_n, double delta_t);
+void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm);
 
 /*--------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
@@ -149,8 +150,10 @@ int main(int argc, char* argv[]) {
       for (loc_part = 0; loc_part < loc_n; loc_part++)
          Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
                n, loc_n, delta_t);
+      /* replace
       MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
-                    pos, loc_n, vect_mpi_t, comm);
+                    pos, loc_n, vect_mpi_t, comm);*/
+      Ring_allgather(loc_n, pos, vect_mpi_t, comm);
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
          Output_state(t, masses, pos, loc_vel, n, loc_n);
@@ -472,3 +475,35 @@ void Update_part(int loc_part, double masses[], vect_t loc_forces[],
                loc_vel[loc_part][X], loc_vel[loc_part][Y]);
 #  endif
 }  /* Update_part */
+
+/*---------------------------------------------------------------------
+ * Function:  Ring_allgather
+ * Purpose:   Allgather replacement using an explicit ring communication
+ *            pattern. Each process sends it's previously received block
+ *            to propagate the data to each process.
+ *
+ * In args:
+ *    n:      number of particles
+ *    buf:    vector of particles
+ *    type:   data type to use
+ *    comm:   which MPI_Comm to use
+ */
+void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm) {
+   int next_rank = (my_rank + 1) % comm_sz;
+   int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
+
+   int send_idx = my_rank;
+
+   for (int i = 1; i < comm_sz; ++i) {
+      int recv_idx = (send_idx - 1 + comm_sz) % comm_sz;
+
+      vect_t *send_block = buf + send_idx*n;
+      vect_t *recv_block = buf + recv_idx*n;
+
+      MPI_Sendrecv(send_block, n, type, next_rank, 0, // send
+                   recv_block, n, type, prev_rank, 0, // receive
+                   comm, MPI_STATUS_IGNORE);
+
+      send_idx = recv_idx;
+   }
+}
