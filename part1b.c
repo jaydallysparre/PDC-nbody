@@ -81,9 +81,6 @@ int my_rank, comm_sz;
 MPI_Comm comm;
 MPI_Datatype vect_mpi_t;
 
-/* Scratch array used by process 0 for global velocity I/O */
-vect_t *vel = NULL;
-
 void Usage(char* prog_name);
 void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
       double* delta_t_p, int* output_freq_p, char* g_i_p);
@@ -109,9 +106,8 @@ int main(int argc, char* argv[]) {
    int output_freq;            /* Frequency of output        */
    double delta_t;             /* Size of timestep           */
    double t;                   /* Current Time               */
-   double* masses;             /* All the masses             */
+   double* loc_masses;         /* All of my masses           */
    vect_t* loc_pos;            /* Positions of my particles  */
-   vect_t* pos;                /* Positions of all particles */
    vect_t* loc_vel;            /* Velocities of my particles */
    vect_t* loc_forces;         /* Forces on my particles     */
 
@@ -125,12 +121,10 @@ int main(int argc, char* argv[]) {
 
    Get_args(argc, argv, &n, &n_steps, &delta_t, &output_freq, &g_i);
    loc_n = n/comm_sz;  /* n should be evenly divisible by comm_sz */
-   masses = malloc(n*sizeof(double));
-   pos = malloc(n*sizeof(vect_t));
+   loc_masses = malloc(loc_n*sizeof(double));
+   loc_pos = malloc(loc_n*sizeof(vect_t));
    loc_forces = malloc(loc_n*sizeof(vect_t));
-   loc_pos = pos + my_rank*loc_n;
    loc_vel = malloc(loc_n*sizeof(vect_t));
-   if (my_rank == 0) vel = malloc(n*sizeof(vect_t));
    MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
    MPI_Type_commit(&vect_mpi_t);
 
@@ -165,11 +159,10 @@ int main(int argc, char* argv[]) {
       printf("Elapsed time = %e seconds\n", finish-start);
 
    MPI_Type_free(&vect_mpi_t);
-   free(masses);
-   free(pos);
+   free(loc_masses);
+   free(loc_pos);
    free(loc_forces);
    free(loc_vel);
-   if (my_rank == 0) free(vel);
 
    MPI_Finalize();
 
@@ -265,11 +258,22 @@ void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
  * Global var:
  *    vel:     Scratch.  Used by process 0 for global velocities
  */
-void Get_init_cond(double masses[], vect_t pos[],
-     vect_t loc_vel[], int n, int loc_n) {
+void Get_init_cond(double loc_masses[], vect_t loc_pos[],
+      vect_t loc_vel[], int n, int loc_n) {
+
    int part;
 
+   // necessary declaration for MPI_Scatter
+   double *masses = NULL;
+   vect_t *pos = NULL;
+   vect_t *vel = NULL;
+
    if (my_rank == 0) {
+      // temporary allocation
+      masses = malloc(n*sizeof(double));
+      pos = malloc(n*sizeof(vect_t));
+      vel = malloc(n*sizeof(vect_t));
+
       printf("For each particle, enter (in order):\n");
       printf("   its mass, its x-coord, its y-coord, ");
       printf("its x-velocity, its y-velocity\n");
@@ -281,10 +285,17 @@ void Get_init_cond(double masses[], vect_t pos[],
          scanf("%lf", &vel[part][Y]);
       }
    }
-   MPI_Bcast(masses, n, MPI_DOUBLE, 0, comm);
-   MPI_Bcast(pos, n, vect_mpi_t, 0, comm);
-   MPI_Scatter(vel, loc_n, vect_mpi_t,
-         loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   MPI_Scatter(masses, loc_n, MPI_DOUBLE,
+      loc_masses, loc_n, MPI_DOUBLE, 0, comm);
+   MPI_Scatter(pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
+   MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   if (my_rank == 0) {
+      free(masses);
+      free(pos);
+      free(vel);
+   }
 }  /* Get_init_cond */
 
 /*---------------------------------------------------------------------
@@ -308,14 +319,22 @@ void Get_init_cond(double masses[], vect_t pos[],
  *            velocities are in the positive y-direction and
  *            some are negative.
  */
-void Gen_init_cond(double masses[], vect_t pos[],
+void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n) {
    int part;
    double mass = 5.0e24;
    double gap = 1.0e5;
    double speed = 3.0e4;
 
+   double *masses = NULL;
+   vect_t *pos = NULL;
+   vect_t *vel = NULL;
+
    if (my_rank == 0) {
+      // temporary allocation
+      masses = malloc(n*sizeof(double));
+      pos = malloc(n*sizeof(vect_t));
+      vel = malloc(n*sizeof(vect_t));
 //    srandom(1);
       for (part = 0; part < n; part++) {
          masses[part] = mass;
@@ -330,10 +349,16 @@ void Gen_init_cond(double masses[], vect_t pos[],
       }
    }
 
-   MPI_Bcast(masses, n, MPI_DOUBLE, 0, comm);
-   MPI_Bcast(pos, n, vect_mpi_t, 0, comm);
-   MPI_Scatter(vel, loc_n, vect_mpi_t,
-         loc_vel, loc_n, vect_mpi_t, 0, comm);
+   MPI_Scatter(masses, loc_n, MPI_DOUBLE,
+      loc_masses, loc_n, MPI_DOUBLE, 0, comm);
+   MPI_Scatter(pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
+   MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
+
+   if (my_rank == 0) {
+      free(masses);
+      free(pos);
+      free(vel);
+   }
 }  /* Gen_init_cond */
 
 
