@@ -111,6 +111,10 @@ int main(int argc, char* argv[]) {
    vect_t* loc_vel;            /* Velocities of my particles */
    vect_t* loc_forces;         /* Forces on my particles     */
 
+   vect_t* pos_ring_buf;       /* Ring buffer for positions  */
+   double* masses_ring_buf;    /* Ring buffer for masses     */
+   int buf_i;                  /* Buffer index               */
+
    char g_i;                   /*_G_en or _i_nput init conds */
    double start, finish;       /* For timings                */
 
@@ -137,6 +141,25 @@ int main(int argc, char* argv[]) {
 #  ifndef NO_OUTPUT
    Output_state(0.0, masses, pos, loc_vel, n, loc_n);
 #  endif
+
+   for (step = 1; step < n_steps; ++step) {
+      t=step*delta_t;
+
+      // compute local forces first
+      for (loc_part = 0; loc_part < loc_n; ++loc_part) {
+         Compute_force(loc_forces, loc_pos, loc_masses loc_pos,
+             loc_masses, loc_part, loc_n, my_rank);
+      }
+
+      for (buf_i = 1; buf_i < comm_sz; ++i) {
+         // cycle ring buffers
+         Cycle_buffers()
+      }
+
+      }
+   }
+
+   /*
    for (step = 1; step <= n_steps; step++) {
       t = step*delta_t;
       for (loc_part = 0; loc_part < loc_n; loc_part++)
@@ -146,13 +169,13 @@ int main(int argc, char* argv[]) {
                n, loc_n, delta_t);
       /* replace
       MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
-                    pos, loc_n, vect_mpi_t, comm);*/
+                    pos, loc_n, vect_mpi_t, comm);
       Ring_allgather(loc_n, pos, vect_mpi_t, comm);
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
          Output_state(t, masses, pos, loc_vel, n, loc_n);
 #     endif
-   }
+   }*/
 
    finish = MPI_Wtime();
    if (my_rank == 0)
@@ -416,41 +439,27 @@ void Output_state(double time, double masses[], vect_t pos[],
  * Here, m_k is the mass of particle k and s_k is its position vector
  * (at time t).
  */
-void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
-      vect_t pos[], int n, int loc_n) {
-   int k, part;
+void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
+      vect_t ext_pos[], double ext_masses[], int part, int n, int rank) {
    double mg;
    vect_t f_part_k;
    double len, len_3, fact;
 
-   /* Global index corresponding to loc_part */
-   part = my_rank*loc_n + loc_part;
-   loc_forces[loc_part][X] = loc_forces[loc_part][Y] = 0.0;
-#  ifdef DEBUG
-   printf("Proc %d > Current total force on part %d = (%.3e, %.3e)\n",
-         my_rank, part, loc_forces[loc_part][X],
-         loc_forces[loc_part][Y]);
-#  endif
-   for (k = 0; k < n; k++) {
-      if (k != part) {
-         /* Compute force on part due to k */
-         f_part_k[X] = pos[part][X] - pos[k][X];
-         f_part_k[Y] = pos[part][Y] - pos[k][Y];
-         len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
-         len_3 = len*len*len;
-         mg = -G*masses[part]*masses[k];
-         fact = mg/len_3;
-         f_part_k[X] *= fact;
-         f_part_k[Y] *= fact;
-#        ifdef DEBUG
-         printf("Proc %d > Force on part %d due to part %d = (%.3e, %.3e)\n",
-               my_rank, part, k, f_part_k[X], f_part_k[Y]);
-#        endif
+   for (int k = 0; k < n; ++k) {
+      if (rank == my_rank && k == part) continue;
 
-         /* Add force in to total forces */
-         loc_forces[loc_part][X] += f_part_k[X];
-         loc_forces[loc_part][Y] += f_part_k[Y];
-      }
+      f_part_k[X] = loc_pos[part][X] - ext_pos[k][X];
+      f_part_k[Y] = loc_pos[part][Y] - ext_pos[k][Y];
+
+      len = sqrt(f_part_k[X]*f_part_k[X] + f_part_k[Y]*f_part_k[Y]);
+      len_3 = len*len*len;
+      mg = -G*loc_masses[part]*ext_masses[k];
+      fact = mg/len_3;
+      f_part_k[X] *= fact;
+      f_part_k[Y] *= fact;
+
+      loc_forces[part][X] += f_part_k[X];
+      loc_forces[part][Y] += f_part_k[Y];
    }
 }  /* Compute_force */
 
@@ -531,4 +540,22 @@ void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm) {
 
       send_idx = recv_idx;
    }
+}
+
+void Cycle_buffers() {
+   int next_rank = (my_rank + 1) % comm_sz;
+   int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
+
+   int send_idx = my_rank;
+
+   int recv_idx = (send_idx - 1 + comm_sz) % comm_sz;
+
+   vect_t *send_block = buf + send_idx*n;
+   vect_t *recv_block = buf + recv_idx*n;
+
+   MPI_Sendrecv(send_block, n, type, next_rank, 0, // send
+                recv_block, n, type, prev_rank, 0, // receive
+                comm, MPI_STATUS_IGNORE);
+
+   send_idx = recv_idx;
 }
