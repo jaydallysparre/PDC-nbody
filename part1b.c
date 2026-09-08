@@ -67,6 +67,7 @@
 #include <string.h>
 #include <math.h>
 #include <mpi.h>
+#include <stdbool.h>
 
 #define DIM 2  /* Two-dimensional system */
 #define X 0    /* x-coordinate subscript */
@@ -129,13 +130,17 @@ int main(int argc, char* argv[]) {
    loc_pos = malloc(loc_n*sizeof(vect_t));
    loc_forces = malloc(loc_n*sizeof(vect_t));
    loc_vel = malloc(loc_n*sizeof(vect_t));
+   pos_ring_buf = malloc(loc_n*sizeof(vect_t));
+   masses_ring_buf = malloc(loc_n*sizeof(double));
    MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
    MPI_Type_commit(&vect_mpi_t);
 
    if (g_i == 'i')
-      Get_init_cond(masses, pos, loc_vel, n, loc_n);
+      Get_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
    else
-      Gen_init_cond(masses, pos, loc_vel, n, loc_n);
+      Gen_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
+
+   memcpy(masses_ring_buf, loc_masses, loc_n*sizeof(double));
 
    start = MPI_Wtime();
 #  ifndef NO_OUTPUT
@@ -145,16 +150,25 @@ int main(int argc, char* argv[]) {
    for (step = 1; step < n_steps; ++step) {
       t=step*delta_t;
 
+      memcpy(pos_ring_buf, loc_pos, loc_n*sizeof(vect_t));
+
       // compute local forces first
       for (loc_part = 0; loc_part < loc_n; ++loc_part) {
-         Compute_force(loc_forces, loc_pos, loc_masses loc_pos,
-             loc_masses, loc_part, loc_n, my_rank);
+         Compute_force(loc_forces, loc_pos, loc_masses, loc_pos,
+             loc_masses, loc_part, loc_n, local);
       }
 
-      for (buf_i = 1; buf_i < comm_sz; ++i) {
+      for (buf_i = 1; buf_i < comm_sz; ++buf_i) {
          // cycle ring buffers
-         Cycle_buffers()
+         Cycle_buffers(pos_ring_buf, masses_ring_buf);
+
+         for (loc_part = 0; loc_part < loc_n; ++loc_part) {
+            Compute_force(loc_forces, loc_pos, loc_masses,
+                pos_ring_buf, masses_ring_buf, loc_part, loc_n, false);
+         }
       }
+
+      for (loc_part = 0; loc_part < loc_n; ++loc_part) {
 
       }
    }
@@ -186,6 +200,8 @@ int main(int argc, char* argv[]) {
    free(loc_pos);
    free(loc_forces);
    free(loc_vel);
+   free(pos_ring_buf);
+   free(masses_ring_buf);
 
    MPI_Finalize();
 
@@ -440,13 +456,14 @@ void Output_state(double time, double masses[], vect_t pos[],
  * (at time t).
  */
 void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
-      vect_t ext_pos[], double ext_masses[], int part, int n, int rank) {
+      vect_t ext_pos[], double ext_masses[], int part, int n, bool local) {
    double mg;
    vect_t f_part_k;
    double len, len_3, fact;
 
+   loc_forces[part][X] = loc_forces[part][Y] = 0.0;
    for (int k = 0; k < n; ++k) {
-      if (rank == my_rank && k == part) continue;
+      if (local && k == part) continue;
 
       f_part_k[X] = loc_pos[part][X] - ext_pos[k][X];
       f_part_k[Y] = loc_pos[part][Y] - ext_pos[k][Y];
@@ -542,20 +559,15 @@ void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm) {
    }
 }
 
-void Cycle_buffers() {
+void Cycle_buffers(vect_t pos_buf, double masses_buf[]) {
    int next_rank = (my_rank + 1) % comm_sz;
    int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
 
-   int send_idx = my_rank;
-
-   int recv_idx = (send_idx - 1 + comm_sz) % comm_sz;
-
-   vect_t *send_block = buf + send_idx*n;
-   vect_t *recv_block = buf + recv_idx*n;
-
-   MPI_Sendrecv(send_block, n, type, next_rank, 0, // send
-                recv_block, n, type, prev_rank, 0, // receive
+   MPI_Sendrecv(pos_buf, n, type, next_rank, 0, // send
+                pos_buf, n, type, prev_rank, 0, // receive
                 comm, MPI_STATUS_IGNORE);
 
-   send_idx = recv_idx;
+   MPI_Sendrecv(masses_buf, n, type, next_rank, 0, // send
+                masses_buf, n, type, prev_rank, 0, // receive
+                comm, MPI_STATUS_IGNORE);
 }
