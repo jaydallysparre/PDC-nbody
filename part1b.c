@@ -82,20 +82,25 @@ int my_rank, comm_sz;
 MPI_Comm comm;
 MPI_Datatype vect_mpi_t;
 
+/* Arrays used by process 0 for I/O */
+vect_t *vel = NULL;
+vect_t *pos = NULL;
+double *masses = NULL;
+
 void Usage(char* prog_name);
 void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
       double* delta_t_p, int* output_freq_p, char* g_i_p);
-void Get_init_cond(double masses[], vect_t pos[],
+void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
-void Gen_init_cond(double masses[], vect_t pos[],
+void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
-void Output_state(double time, double masses[], vect_t pos[],
+void Output_state(double time, double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n);
-void Compute_force(int loc_part, double masses[], vect_t loc_forces[],
-      vect_t pos[], int n, int loc_n);
-void Update_part(int loc_part, double masses[], vect_t loc_forces[],
-      vect_t loc_pos[], vect_t loc_vel[], int n, int loc_n, double delta_t);
-void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm);
+void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
+      vect_t ext_pos[], double ext_masses[], int part, int n, bool local);
+void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
+      vect_t loc_pos[], vect_t loc_vel[], double delta_t);
+void Cycle_buffers(vect_t pos_buf[], double masses_buf[]);
 
 /*--------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
@@ -135,6 +140,13 @@ int main(int argc, char* argv[]) {
    MPI_Type_contiguous(DIM, MPI_DOUBLE, &vect_mpi_t);
    MPI_Type_commit(&vect_mpi_t);
 
+   // initialize I/O buffers
+   if (my_rank == 0) {
+      masses = malloc(n*sizeof(double));
+      pos = malloc(n*sizeof(vect_t));
+      vel = malloc(n*sizeof(vect_t));
+   }
+
    if (g_i == 'i')
       Get_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
    else
@@ -169,27 +181,16 @@ int main(int argc, char* argv[]) {
       }
 
       for (loc_part = 0; loc_part < loc_n; ++loc_part) {
-
+         Update_part(loc_part, loc_masses, loc_forces,
+             loc_pos, loc_vel, delta_t);
       }
-   }
 
-   /*
-   for (step = 1; step <= n_steps; step++) {
-      t = step*delta_t;
-      for (loc_part = 0; loc_part < loc_n; loc_part++)
-         Compute_force(loc_part, masses, loc_forces, pos, n, loc_n);
-      for (loc_part = 0; loc_part < loc_n; loc_part++)
-         Update_part(loc_part, masses, loc_forces, loc_pos, loc_vel,
-               n, loc_n, delta_t);
-      /* replace
-      MPI_Allgather(MPI_IN_PLACE, loc_n, vect_mpi_t,
-                    pos, loc_n, vect_mpi_t, comm);
-      Ring_allgather(loc_n, pos, vect_mpi_t, comm);
 #     ifndef NO_OUTPUT
       if (step % output_freq == 0)
-         Output_state(t, masses, pos, loc_vel, n, loc_n);
+         Output_state(t, loc_masses, loc_pos, loc_vel, n, loc_n);
 #     endif
-   }*/
+
+   }
 
    finish = MPI_Wtime();
    if (my_rank == 0)
@@ -202,6 +203,11 @@ int main(int argc, char* argv[]) {
    free(loc_vel);
    free(pos_ring_buf);
    free(masses_ring_buf);
+
+   // no if statement because free(NULL) is a guaranteed no-op
+   free(vel);
+   free(masses);
+   free(pos);
 
    MPI_Finalize();
 
@@ -283,36 +289,28 @@ void Get_args(int argc, char* argv[], int* n_p, int* n_steps_p,
 
 
 /*---------------------------------------------------------------------
- * Function:   Get_init_cond
- * Purpose:    Read in initial conditions:  mass, position and velocity
- *             for each particle
+ * Function: Get_init_cond
+ * Purpose:  Read in initial conditions:  mass, position and velocity
+ *           for each particle
  * In args:
- *    n:       total number of particles
- *    loc_n:   number of particles assigned to this process
+ *    n:           total number of particles
+ *    loc_n:       number of particles assigned to this process
  * Out args:
- *    masses:  global array of the masses of the particles
- *    pos:     global array of positions
- *    loc_vel: local array of velocities assigned to this process.
+ *    loc_masses:  local array of the masses of the particles
+ *    loc_pos:     local array of particle positions for this process
+ *    loc_vel:     local array of velocities assigned to this process
  *
- * Global var:
- *    vel:     Scratch.  Used by process 0 for global velocities
+ * Global vars:
+ *    vel:         Scratch.  Used by process 0 for global velocities
+ *    pos:         Scratch.  Used by process 0 for global positions
+ *    masses:      Scratch.  Used by process 0 for global masses
  */
 void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n) {
 
    int part;
 
-   // necessary declaration for MPI_Scatter
-   double *masses = NULL;
-   vect_t *pos = NULL;
-   vect_t *vel = NULL;
-
    if (my_rank == 0) {
-      // temporary allocation
-      masses = malloc(n*sizeof(double));
-      pos = malloc(n*sizeof(vect_t));
-      vel = malloc(n*sizeof(vect_t));
-
       printf("For each particle, enter (in order):\n");
       printf("   its mass, its x-coord, its y-coord, ");
       printf("its x-velocity, its y-velocity\n");
@@ -329,12 +327,6 @@ void Get_init_cond(double loc_masses[], vect_t loc_pos[],
       loc_masses, loc_n, MPI_DOUBLE, 0, comm);
    MPI_Scatter(pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
    MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
-
-   if (my_rank == 0) {
-      free(masses);
-      free(pos);
-      free(vel);
-   }
 }  /* Get_init_cond */
 
 /*---------------------------------------------------------------------
@@ -342,21 +334,24 @@ void Get_init_cond(double loc_masses[], vect_t loc_pos[],
  * Purpose:   Generate initial conditions:  mass, position and velocity
  *            for each particle
  * In args:
- *    n:       total number of particles
- *    loc_n:   number of particles assigned to this process
+ *    n:           total number of particles
+ *    loc_n:       number of particles assigned to this process
  * Out args:
- *    masses:  global array of the masses of the particles
- *    pos:     global array of positions
- *    loc_vel: local array of velocities assigned to this process.
- * Global var:
- *    vel:     Scratch.  Used by process 0 for global velocities
+ *    loc_masses:  local array of the masses of the particles
+ *    loc_pos:     local array of particle positions for this process
+ *    loc_vel:     local array of velocities assigned to this process
  *
- * Note:      The initial conditions place all particles at
- *            equal intervals on the nonnegative x-axis with
- *            identical masses, and identical initial speeds
- *            parallel to the y-axis.  However, some of the
- *            velocities are in the positive y-direction and
- *            some are negative.
+ * Global vars:
+ *    vel:         Scratch.  Used by process 0 for global velocities
+ *    pos:         Scratch.  Used by process 0 for global positions
+ *    masses:      Scratch.  Used by process 0 for global masses
+ *
+ * Note:           The initial conditions place all particles at
+ *                 equal intervals on the nonnegative x-axis with
+ *                 identical masses, and identical initial speeds
+ *                 parallel to the y-axis.  However, some of the
+ *                 velocities are in the positive y-direction and
+ *                 some are negative.
  */
 void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n) {
@@ -365,15 +360,7 @@ void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
    double gap = 1.0e5;
    double speed = 3.0e4;
 
-   double *masses = NULL;
-   vect_t *pos = NULL;
-   vect_t *vel = NULL;
-
    if (my_rank == 0) {
-      // temporary allocation
-      masses = malloc(n*sizeof(double));
-      pos = malloc(n*sizeof(vect_t));
-      vel = malloc(n*sizeof(vect_t));
 //    srandom(1);
       for (part = 0; part < n; part++) {
          masses[part] = mass;
@@ -393,11 +380,6 @@ void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
    MPI_Scatter(pos, loc_n, vect_mpi_t, loc_pos, loc_n, vect_mpi_t, 0, comm);
    MPI_Scatter(vel, loc_n, vect_mpi_t, loc_vel, loc_n, vect_mpi_t, 0, comm);
 
-   if (my_rank == 0) {
-      free(masses);
-      free(pos);
-      free(vel);
-   }
 }  /* Gen_init_cond */
 
 
@@ -406,18 +388,20 @@ void Gen_init_cond(double loc_masses[], vect_t loc_pos[],
  * Purpose:    Print the current state of the system
  * In args:
  *    time:    current time
- *    masses:  global array of particle masses
- *    pos:     global array of particle positions
- *    loc_vel: local array of my particle velocities
- *    n:       total number of particles
- *    loc_n:   number of my particles
+ *    loc_masses: local array of my particle masses
+ *    loc_pos:    local array of my particle positions
+ *    loc_vel:    local array of my particle velocities
+ *    n:          total number of particles
+ *    loc_n:      number of my particles
  */
-void Output_state(double time, double masses[], vect_t pos[],
+void Output_state(double time, double loc_masses[], vect_t loc_pos[],
       vect_t loc_vel[], int n, int loc_n) {
    int part;
 
-   MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t,
-         0, comm);
+   MPI_Gather(loc_pos, loc_n, vect_mpi_t, pos, loc_n, vect_mpi_t, 0, comm);
+   MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
+   MPI_Gather(loc_masses, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
+
    if (my_rank == 0) {
       printf("%.2f\n", time);
       for (part = 0; part < n; part++) {
@@ -438,12 +422,16 @@ void Output_state(double time, double masses[], vect_t pos[],
  *                 exploit the symmetry (force on particle i due to
  *                 particle k) = -(force on particle k due to particle i)
  * In args:
- *    loc_part:    the particle (local index) on which we're computing
+ *    loc_pos:     local array of particle positions
+ *    loc_masses:  local array of particle masses
+ *    ext_pos:     external array of particle positions
+ *    ext_masses:  external array of particle masses
+ *    part:        the particle (local index) on which we're computing
  *                 the total force
- *    masses:      global array of particle masses
- *    pos:         global array of particle positions
- *    n:           total number of particles
- *    loc_n:       number of my particles
+ *    n:           number of particles in external arrays
+ *    local:       whether or not we are doing a local computation
+ *                 (necessary to skip our own index)
+ *
  * Out arg:
  *    loc_forces:  array of total forces acting on my particles
  *
@@ -486,10 +474,8 @@ void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
  * Purpose:   Update the velocity and position for particle loc_part
  * In args:
  *    loc_part:    local index of the particle we're updating
- *    masses:      global array of particle masses
+ *    loc_masses:  local array of particle masses
  *    loc_forces:  local array of total forces
- *    n:           total number of particles
- *    loc_n:       number of particles assigned to this process
  *    delta_t:     step size
  *
  * In/out args:
@@ -499,14 +485,11 @@ void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
  * Note:  This version uses Euler's method to update both the velocity
  *    and the position.
  */
-void Update_part(int loc_part, double masses[], vect_t loc_forces[],
-      vect_t loc_pos[], vect_t loc_vel[], int n, int loc_n,
-      double delta_t) {
-   int part;
+void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
+      vect_t loc_pos[], vect_t loc_vel[], double delta_t) {
    double fact;
 
-   part = my_rank*loc_n + loc_part;
-   fact = delta_t/masses[part];
+   fact = delta_t/loc_masses[part];
 #  ifdef DEBUG
    printf("Proc %d > Before update of %d:\n", my_rank, part);
    printf("   Position  = (%.3e, %.3e)\n",
@@ -527,39 +510,18 @@ void Update_part(int loc_part, double masses[], vect_t loc_forces[],
 #  endif
 }  /* Update_part */
 
+
 /*---------------------------------------------------------------------
- * Function:  Ring_allgather
- * Purpose:   Allgather replacement using an explicit ring communication
- *            pattern. Each process sends it's previously received block
- *            to propagate the data to each process.
+ * Function:  Cycle_buffers
+ * Purpose:   Sends current buffer to next process in ring and receives
+ *            data into same buffer from previous ring.
  *
- * In args:
- *    n:      number of particles
- *    buf:    vector of particles
- *    type:   data type to use
- *    comm:   which MPI_Comm to use
+ * In/out args:
+ *    pos_buf:     buffer of particle positional data
+ *    masses_buf:  buffer of particle positional data
+ *
  */
-void Ring_allgather(int n, vect_t *buf, MPI_Datatype type, MPI_Comm comm) {
-   int next_rank = (my_rank + 1) % comm_sz;
-   int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
-
-   int send_idx = my_rank;
-
-   for (int i = 1; i < comm_sz; ++i) {
-      int recv_idx = (send_idx - 1 + comm_sz) % comm_sz;
-
-      vect_t *send_block = buf + send_idx*n;
-      vect_t *recv_block = buf + recv_idx*n;
-
-      MPI_Sendrecv(send_block, n, type, next_rank, 0, // send
-                   recv_block, n, type, prev_rank, 0, // receive
-                   comm, MPI_STATUS_IGNORE);
-
-      send_idx = recv_idx;
-   }
-}
-
-void Cycle_buffers(vect_t pos_buf, double masses_buf[]) {
+void Cycle_buffers(vect_t pos_buf[], double masses_buf[]) {
    int next_rank = (my_rank + 1) % comm_sz;
    int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
 
@@ -570,4 +532,4 @@ void Cycle_buffers(vect_t pos_buf, double masses_buf[]) {
    MPI_Sendrecv(masses_buf, n, type, next_rank, 0, // send
                 masses_buf, n, type, prev_rank, 0, // receive
                 comm, MPI_STATUS_IGNORE);
-}
+} /* Cycle_buffers */
