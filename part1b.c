@@ -152,7 +152,6 @@ int main(int argc, char* argv[]) {
    else
       Gen_init_cond(loc_masses, loc_pos, loc_vel, n, loc_n);
 
-   memcpy(masses_ring_buf, loc_masses, loc_n*sizeof(double));
 
    start = MPI_Wtime();
 #  ifndef NO_OUTPUT
@@ -163,6 +162,7 @@ int main(int argc, char* argv[]) {
       t=step*delta_t;
 
       memcpy(pos_ring_buf, loc_pos, loc_n*sizeof(vect_t));
+      memcpy(masses_ring_buf, loc_masses, loc_n*sizeof(double));
 
       // compute local forces first
       for (loc_part = 0; loc_part < loc_n; ++loc_part) {
