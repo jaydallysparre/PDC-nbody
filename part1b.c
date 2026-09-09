@@ -529,6 +529,6 @@ void Cycle_buffers(vect_t pos_buf[], double masses_buf[], int loc_n) {
    MPI_Sendrecv_replace(pos_buf, loc_n, vect_mpi_t, next_rank, 0,
                 prev_rank, 0, comm, MPI_STATUS_IGNORE);
 
-   MPI_Sendrecv_replace(masses_buf, loc_n, MPI_DOUBLE, next_rank, 0,
-                prev_rank, 0, comm, MPI_STATUS_IGNORE);
+   MPI_Sendrecv_replace(masses_buf, loc_n, MPI_DOUBLE, next_rank, 1,
+                prev_rank, 1, comm, MPI_STATUS_IGNORE);
 } /* Cycle_buffers */
