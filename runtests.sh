@@ -6,6 +6,8 @@ make all DIR=.temp
 # test for a number of different process counts
 procN=(1 2 3 4 6 12)
 
+eps="0.000000001" # acceptable error
+
 for test in testcases/*.test; do
     name=$(basename "$test" .test)
 
@@ -16,8 +18,7 @@ for test in testcases/*.test; do
         mpirun -n "$n" .temp/nbodyref $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_ref"
         mpirun -n "$n" .temp/nbody1a $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_1a"
 
-        # diff check with last line (timing) removed
-        diff <(sed '$d' ".temp/${name}_${n}_ref") <(sed '$d' ".temp/${name}_${n}_1a") > /dev/null
+        python3 epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1a" "$eps"
         statusA=$? # exit status for ref vs 1a
 
         if [ "$statusA" -eq 0 ]; then
@@ -29,7 +30,7 @@ for test in testcases/*.test; do
         # placed after because its easier to catch mpi errors
         mpirun -n "$n" .temp/nbody1b $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_1b"
 
-        diff <(sed '$d' ".temp/${name}_${n}_ref") <(sed '$d' ".temp/${name}_${n}_1b") > /dev/null
+        python3 epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1b" "$eps"
         statusB=$? # exit status for ref vs 1b
 
         if [ "$statusB" -eq 0 ]; then
@@ -40,5 +41,5 @@ for test in testcases/*.test; do
     done
 done
 
-#rm -rf .temp
+rm -rf .temp
 
