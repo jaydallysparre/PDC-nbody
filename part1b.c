@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
       // compute local forces first
       for (loc_part = 0; loc_part < loc_n; ++loc_part) {
          Compute_force(loc_forces, loc_pos, loc_masses, loc_pos,
-             loc_masses, loc_part, loc_n, local);
+             loc_masses, loc_part, loc_n, true);
       }
 
       for (buf_i = 1; buf_i < comm_sz; ++buf_i) {
@@ -489,7 +489,7 @@ void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
       vect_t loc_pos[], vect_t loc_vel[], double delta_t) {
    double fact;
 
-   fact = delta_t/loc_masses[part];
+   fact = delta_t/loc_masses[loc_part];
 #  ifdef DEBUG
    printf("Proc %d > Before update of %d:\n", my_rank, part);
    printf("   Position  = (%.3e, %.3e)\n",
@@ -514,22 +514,23 @@ void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
 /*---------------------------------------------------------------------
  * Function:  Cycle_buffers
  * Purpose:   Sends current buffer to next process in ring and receives
- *            data into same buffer from previous ring.
+ *            data into same buffer from previous process in ring.
  *
  * In/out args:
  *    pos_buf:     buffer of particle positional data
  *    masses_buf:  buffer of particle positional data
+ *    loc_n:       size of buffer
  *
  */
-void Cycle_buffers(vect_t pos_buf[], double masses_buf[]) {
+void Cycle_buffers(vect_t pos_buf[], double masses_buf[], int loc_n) {
    int next_rank = (my_rank + 1) % comm_sz;
    int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
 
-   MPI_Sendrecv(pos_buf, n, type, next_rank, 0, // send
-                pos_buf, n, type, prev_rank, 0, // receive
+   MPI_Sendrecv(pos_buf, loc_n, vect_mpi_t, next_rank, 0, // send
+                pos_buf, loc_n, vect_mpi_t, prev_rank, 0, // receive
                 comm, MPI_STATUS_IGNORE);
 
-   MPI_Sendrecv(masses_buf, n, type, next_rank, 0, // send
-                masses_buf, n, type, prev_rank, 0, // receive
+   MPI_Sendrecv(masses_buf, loc_n, MPI_DOUBLE, next_rank, 0, // send
+                masses_buf, loc_n, MPI_DOUBLE, prev_rank, 0, // receive
                 comm, MPI_STATUS_IGNORE);
 } /* Cycle_buffers */
