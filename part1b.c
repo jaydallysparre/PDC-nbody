@@ -166,6 +166,7 @@ int main(int argc, char* argv[]) {
 
       // compute local forces first
       for (loc_part = 0; loc_part < loc_n; ++loc_part) {
+         loc_forces[loc_part][X] = loc_forces[loc_part][Y] = 0.0;
          Compute_force(loc_forces, loc_pos, loc_masses, loc_pos,
              loc_masses, loc_part, loc_n, true);
       }
@@ -449,7 +450,6 @@ void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
    vect_t f_part_k;
    double len, len_3, fact;
 
-   loc_forces[part][X] = loc_forces[part][Y] = 0.0;
    for (int k = 0; k < n; ++k) {
       if (local && k == part) continue;
 
@@ -526,11 +526,9 @@ void Cycle_buffers(vect_t pos_buf[], double masses_buf[], int loc_n) {
    int next_rank = (my_rank + 1) % comm_sz;
    int prev_rank = (my_rank - 1 + comm_sz) % comm_sz;
 
-   MPI_Sendrecv(pos_buf, loc_n, vect_mpi_t, next_rank, 0, // send
-                pos_buf, loc_n, vect_mpi_t, prev_rank, 0, // receive
-                comm, MPI_STATUS_IGNORE);
+   MPI_Sendrecv_replace(pos_buf, loc_n, vect_mpi_t, next_rank, 0,
+                prev_rank, 0, comm, MPI_STATUS_IGNORE);
 
-   MPI_Sendrecv(masses_buf, loc_n, MPI_DOUBLE, next_rank, 0, // send
-                masses_buf, loc_n, MPI_DOUBLE, prev_rank, 0, // receive
-                comm, MPI_STATUS_IGNORE);
+   MPI_Sendrecv_replace(masses_buf, loc_n, MPI_DOUBLE, next_rank, 0,
+                prev_rank, 0, comm, MPI_STATUS_IGNORE);
 } /* Cycle_buffers */
