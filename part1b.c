@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
 
    start = MPI_Wtime();
 #  ifndef NO_OUTPUT
-   Output_state(0.0, masses, pos, loc_vel, n, loc_n);
+   Output_state(0.0, loc_masses, loc_pos, loc_vel, n, loc_n);
 #  endif
 
    for (step = 1; step < n_steps; ++step) {
@@ -400,7 +400,7 @@ void Output_state(double time, double loc_masses[], vect_t loc_pos[],
 
    MPI_Gather(loc_pos, loc_n, vect_mpi_t, pos, loc_n, vect_mpi_t, 0, comm);
    MPI_Gather(loc_vel, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
-   MPI_Gather(loc_masses, loc_n, vect_mpi_t, vel, loc_n, vect_mpi_t, 0, comm);
+   MPI_Gather(loc_masses, loc_n, MPI_DOUBLE, masses, loc_n, MPI_DOUBLE, 0, comm);
 
    if (my_rank == 0) {
       printf("%.2f\n", time);
@@ -491,7 +491,7 @@ void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
 
    fact = delta_t/loc_masses[loc_part];
 #  ifdef DEBUG
-   printf("Proc %d > Before update of %d:\n", my_rank, part);
+   printf("Proc %d > Before update of %d:\n", my_rank, loc_part);
    printf("   Position  = (%.3e, %.3e)\n",
          loc_pos[loc_part][X], loc_pos[loc_part][Y]);
    printf("   Velocity  = (%.3e, %.3e)\n",
@@ -505,7 +505,7 @@ void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
    loc_vel[loc_part][Y] += fact * loc_forces[loc_part][Y];
 #  ifdef DEBUG
    printf("Proc %d > Position of %d = (%.3e, %.3e), Velocity = (%.3e,%.3e)\n",
-         my_rank, part, loc_pos[loc_part][X], loc_pos[loc_part][Y],
+         my_rank, loc_part, loc_pos[loc_part][X], loc_pos[loc_part][Y],
                loc_vel[loc_part][X], loc_vel[loc_part][Y]);
 #  endif
 }  /* Update_part */
