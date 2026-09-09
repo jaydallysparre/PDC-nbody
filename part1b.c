@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
    Output_state(0.0, loc_masses, loc_pos, loc_vel, n, loc_n);
 #  endif
 
-   for (step = 1; step < n_steps; ++step) {
+   for (step = 1; step <= n_steps; ++step) {
       t=step*delta_t;
 
       memcpy(pos_ring_buf, loc_pos, loc_n*sizeof(vect_t));
