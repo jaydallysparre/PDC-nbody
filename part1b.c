@@ -100,7 +100,7 @@ void Compute_force(vect_t loc_forces[], vect_t loc_pos[], double loc_masses[],
       vect_t ext_pos[], double ext_masses[], int part, int n, bool local);
 void Update_part(int loc_part, double loc_masses[], vect_t loc_forces[],
       vect_t loc_pos[], vect_t loc_vel[], double delta_t);
-void Cycle_buffers(vect_t pos_buf[], double masses_buf[]);
+void Cycle_buffers(vect_t pos_buf[], double masses_buf[], int loc_n);
 
 /*--------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
 
       for (buf_i = 1; buf_i < comm_sz; ++buf_i) {
          // cycle ring buffers
-         Cycle_buffers(pos_ring_buf, masses_ring_buf);
+         Cycle_buffers(pos_ring_buf, masses_ring_buf, loc_n);
 
          for (loc_part = 0; loc_part < loc_n; ++loc_part) {
             Compute_force(loc_forces, loc_pos, loc_masses,
