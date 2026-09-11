@@ -1,12 +1,12 @@
-/* File:     mpi_nbody_basic.c
+/* File:     part1a.c
  * Purpose:  Implement a 2-dimensional n-body solver that uses the
- *           basic algorithm.  This version uses an in-place Allgather
+ *           basic algorithm.  This version uses a custom ring-based allgather
  *
- * Compile:  mpicc -g -Wall -o mpi_nbody_basic mpi_nbody_basic.c -lm
+ * Compile:  mpicc -g -Wall -o part1a part1a.c -lm
  *           To turn off output (e.g., when timing), define NO_OUTPUT
  *           To get verbose output, define DEBUG
  *
- * Run:      mpiexec -n <number of processes> ./mpi_nbody_basic
+ * Run:      mpiexec -n <number of processes> ./part1a
  *              <number of particles> <number of timesteps>  <size of timestep>
  *              <output frequency> <g|i>
  *              'g': generate initial conditions using a random number
