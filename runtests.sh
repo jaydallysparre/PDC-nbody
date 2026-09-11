@@ -1,6 +1,7 @@
 #!/bin/bash
 
 mkdir .temp
+make clean
 make all DIR=.temp
 
 # test for a number of different process counts
@@ -15,10 +16,10 @@ for test in testcases/*.test; do
         echo "-----------------------------------------------------------------"
         echo "TEST INPUT: $test ON $n PROCESSES"
         echo "-----------------------------------------------------------------"
-        mpirun -n "$n" .temp/nbodyref $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_ref"
-        mpirun -n "$n" .temp/nbody1a $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_1a"
+        mpirun -n "$n" .temp/nbodyref $(cat "$test") < "testcases/${name}.ic" > ".temp/${name}_${n}_ref"
+        mpirun -n "$n" .temp/nbody1a $(cat "$test") < "testcases/${name}.ic" > ".temp/${name}_${n}_1a"
 
-        python3 epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1a" "$eps"
+        python3 testcases/tools/epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1a" "$eps"
         statusA=$? # exit status for ref vs 1a
 
         if [ "$statusA" -eq 0 ]; then
@@ -28,9 +29,9 @@ for test in testcases/*.test; do
         fi
 
         # placed after because its easier to catch mpi errors
-        mpirun -n "$n" .temp/nbody1b $(cat "$test") < testcases/12_particle.ic > ".temp/${name}_${n}_1b"
+        mpirun -n "$n" .temp/nbody1b $(cat "$test") < "testcases/${name}.ic" > ".temp/${name}_${n}_1b"
 
-        python3 epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1b" "$eps"
+        python3 testcases/tools/epsdiff.py ".temp/${name}_${n}_ref" ".temp/${name}_${n}_1b" "$eps"
         statusB=$? # exit status for ref vs 1b
 
         if [ "$statusB" -eq 0 ]; then
@@ -42,4 +43,3 @@ for test in testcases/*.test; do
 done
 
 rm -rf .temp
-
