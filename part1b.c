@@ -1,12 +1,12 @@
-/* File:     mpi_nbody_basic.c
+/* File:     part1b.c
  * Purpose:  Implement a 2-dimensional n-body solver that uses the
- *           basic algorithm.  This version uses an in-place Allgather
+ *           basic algorithm.
  *
- * Compile:  mpicc -g -Wall -o mpi_nbody_basic mpi_nbody_basic.c -lm
+ * Compile:  mpicc -g -Wall -o part1b part1b.c -lm
  *           To turn off output (e.g., when timing), define NO_OUTPUT
  *           To get verbose output, define DEBUG
  *
- * Run:      mpiexec -n <number of processes> ./mpi_nbody_basic
+ * Run:      mpiexec -n <number of processes> ./part1b
  *              <number of particles> <number of timesteps>  <size of timestep>
  *              <output frequency> <g|i>
  *              'g': generate initial conditions using a random number
@@ -26,10 +26,15 @@
  *
  *    for each timestep t {
  *       for each particle i I own
- *          compute F(i), the total force on i
+ *          compute partial F(i), the total force on i for my own particles
+ *       for j to p-1
+ *          cycle buffers
+ *          for each particle i I own
+ *             compute partial F(i), the total force on i from particles
+               in the ring buffer.
+ *
  *       for each particle i I own
  *          update position and velocity of i using F(i) = ma
- *       Allgather positions
  *       if (output step) {
  *          Allgather velocities
  *          Output new positions and velocities
